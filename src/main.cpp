@@ -9,12 +9,25 @@
 #include "converters.hpp"
 
 enum TypeName {
-    Int,
-    Decimal,
-    String,
-    Boolean,
-    Binary,
+    Int,  // Integer value used by BooleanConverter, DateConverter, TimeConverter, TimesStampConverter
+    Float, // Float value used by FloatConverter
+    String,  // String value used by BinaryConverter, StringConverter
+    Decimal  // DecimalConverter is special reading raw bytes
 };
+
+
+std::string enumToString(TypeName typeName) {
+    switch (typeName) {
+        case Int:
+            return "Int";
+        case Float:
+            return "Float";
+        case String:
+            return "String";
+        case Decimal:
+            return "Decimal";
+    }
+}
 
 
 void ReadArrowIpcStream(
@@ -65,32 +78,49 @@ void ReadArrowData(
     converter_function(ipcArrowArrayViewVec[0]->children[0]);
 }
 
-int main() {
-    std::string filePath("../test_data/arrow_perf_100_int");
-
+int LoadDataFromFile(TypeName typeName, std::vector<unsigned char>& bytes){
+    std::string filePath;
+    switch (typeName) {
+        case Int:
+            filePath = "../test_data/arrow_perf_int";
+            break;
+        case String:
+            filePath = "../test_data/arrow_perf_str";
+            break;
+        case Float:
+            filePath = "../test_data/arrow_perf_float";
+            break;
+        case Decimal:
+            filePath = "../test_data/arrow_perf_decimal";
+            break;
+    }
     // load file and stored into bytes
     std::ifstream file(filePath, std::ios::binary);
     if (!file) {
         std::cerr << "Failed to open the file." << std::endl;
-        return 1;
+        return -1;
     }
 
-    std::vector<unsigned char> bytes;
     char byte;
     while (file.get(byte)) {
         bytes.push_back(static_cast<unsigned char>(byte));
     }
-    char* charArray = reinterpret_cast<char*>(bytes.data());
+    return 0;
+}
 
-    int iterCnt = 1000;
-    bool testConsumeIPC = true;
-    bool testReadData = true;
+int TestDataType(TypeName testType, int iterCnt, bool testConsumeIPC, bool testReadData) {
+    std::cout << "Test Data Type: " << enumToString(testType) << std::endl;
+
+    std::vector<unsigned char> bytes;
+    if(LoadDataFromFile(testType, bytes) == -1) {
+        return -1;
+    }
+    char* charArray = reinterpret_cast<char*>(bytes.data());
 
     std::vector<nanoarrow::UniqueArray> ipcArrowArrayVec;
     std::vector<nanoarrow::UniqueArrayView> ipcArrowArrayViewVec;
     nanoarrow::UniqueSchema ipcArrowSchema;
 
-    // just consuming ipc data
     if(testConsumeIPC) {
         auto startTime = std::chrono::high_resolution_clock::now();
 
@@ -98,22 +128,45 @@ int main() {
             ReadArrowIpcStream(charArray, bytes.size(), ipcArrowArrayVec, ipcArrowArrayViewVec, ipcArrowSchema);
         }
         auto endTime = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
-        std::cout << "consume ipc avg duration: " << (duration.count() / iterCnt) << " milliseconds." << std::endl;
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
+        std::cout << "consume ipc avg duration: " << (duration.count() / iterCnt) << " microseconds." << std::endl;
     }
 
     if(testReadData) {
         void (*functionPtr)(ArrowArrayView*);
-        // TODO, assign function according to type
-        functionPtr = IntValueConverter;
+        switch (testType) {
+            case Int:
+                functionPtr = IntValueConverter;
+                break;
+            case String:
+                functionPtr = StringValueConverter;
+                break;
+            case Float:
+                functionPtr = FloatValueConverter;
+                break;
+            case Decimal:
+                functionPtr = DecimalValueConverter;
+                break;
+        }
+
         auto startTime = std::chrono::high_resolution_clock::now();
 
         for(int i = 0; i < iterCnt; i++) {
             ReadArrowData(ipcArrowArrayVec, ipcArrowArrayViewVec, ipcArrowSchema, functionPtr);
         }
         auto endTime = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
-        std::cout << "Read test avg duration: " << (duration.count() / iterCnt) << " milliseconds." << std::endl;
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
+        std::cout << "Read test avg duration: " << (duration.count() / iterCnt) << " microseconds." << std::endl;
     }
+    return 0;
+}
+
+int main() {
+    int ret;
+    int iterCnt = 10000;
+    bool testConsumeIPC = true;
+    bool testReadData = true;
+    TestDataType(TypeName::Int, iterCnt, testConsumeIPC, testReadData);
+    TestDataType(TypeName::String, iterCnt, testConsumeIPC, testReadData);
     return 0;
 }
