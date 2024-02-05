@@ -1,10 +1,25 @@
+/**
+ * This is a prototype to test pure nanoarrow c performance
+ * We identified that there are 4 primitive types that are used by python connector data converter
+ *     1. Int: BooleanConverter, DateConverter, TimeConverter, TimesStampConverter
+ *     2. Float: FloatConverter
+ *     3. String: BinaryConverter, StringConverter
+ *     4. Decimal: DecimalConverter
+ *
+ * The test focus on the following two aspects:
+ *     1. time needed to read data from arrow ipc byte data
+ *     2. time needed to get data from the arrow array
+ *
+ * In the future, the test should be extended to test:
+ *     1. time needed to instantiate converters in connector
+ *     2. data set composed of mixed data types
+ */
+
 #include <iostream>
-#include <chrono>
 #include <fstream>
 #include <vector>
 #include "nanoarrow.h"
 #include "nanoarrow/nanoarrow_ipc.h"
-#include "nanoarrow/nanoarrow_ipc.hpp"
 #include "nanoarrow.hpp"
 #include "converters.hpp"
 
@@ -29,7 +44,14 @@ std::string enumToString(TypeName typeName) {
     }
 }
 
-
+/**
+ * using nanoarrow ipc to consume all the raw bytes into arrow array and arrow schema
+ * @param arrow_bytes
+ * @param arrow_bytes_size
+ * @param ipcArrowArrayVec
+ * @param ipcArrowArrayViewVec
+ * @param ipcArrowSchema
+ */
 void ReadArrowIpcStream(
     char* arrow_bytes,
     int64_t arrow_bytes_size,
@@ -69,15 +91,36 @@ void ReadArrowIpcStream(
     stream.release(&stream);
 }
 
+/**
+ * read arrow data from all the batches
+ * @param ipcArrowArrayVec
+ * @param ipcArrowArrayViewVec
+ * @param ipcArrowSchema
+ * @param converter_function
+ */
 void ReadArrowData(
     std::vector<nanoarrow::UniqueArray>& ipcArrowArrayVec,
     std::vector<nanoarrow::UniqueArrayView>& ipcArrowArrayViewVec,
     nanoarrow::UniqueSchema& ipcArrowSchema,
     void (*converter_function)(ArrowArrayView*)
 ){
-    converter_function(ipcArrowArrayViewVec[0]->children[0]);
+
+    for(int i = 0; i < ipcArrowArrayVec.size(); i+= 1){
+        // n_children here is for column, currently we only test data with one column
+        // in the future we can test data of multiple types/columns, we need to change the code accordingly
+        for(int j = 0; j < ipcArrowArrayViewVec[i]->n_children; j += 1){
+            converter_function(ipcArrowArrayViewVec[i]->children[j]);
+        }
+    }
+
 }
 
+/**
+ * local data into memory from test data folder
+ * @param typeName
+ * @param bytes
+ * @return
+ */
 int LoadDataFromFile(TypeName typeName, std::vector<unsigned char>& bytes){
     std::string filePath;
     switch (typeName) {
@@ -163,10 +206,12 @@ int TestDataType(TypeName testType, int iterCnt, bool testConsumeIPC, bool testR
 
 int main() {
     int ret;
-    int iterCnt = 10000;
+    int iterCnt = 1000;
     bool testConsumeIPC = true;
     bool testReadData = true;
     TestDataType(TypeName::Int, iterCnt, testConsumeIPC, testReadData);
     TestDataType(TypeName::String, iterCnt, testConsumeIPC, testReadData);
+    TestDataType(TypeName::Float, iterCnt, testConsumeIPC, testReadData);
+    TestDataType(TypeName::Decimal, iterCnt, testConsumeIPC, testReadData);
     return 0;
 }
